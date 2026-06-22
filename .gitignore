@@ -10,8 +10,8 @@ dist/
 .venv/
 .venv-isaac/
 
-# Generated robot assets (recreate: python scripts/prepare_assets.py)
-/assets/
+# Note: assets/ (SharpaWave URDF + meshes) IS committed — self-contained repo.
+# Regenerate from the vendor source with: python scripts/prepare_assets.py
 
 # Runtime / debug output
 *.log

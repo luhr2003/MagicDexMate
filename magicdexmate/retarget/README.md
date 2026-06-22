@@ -75,7 +75,8 @@ pinky : CMC, MCP_FE, MCP_AA, PIP, DIP
 ## 用法
 
 环境（uv，见根 [README](../../README.md)）：`bash scripts/setup_env.sh`。
-先生成 URDF 资产：`.venv/bin/python scripts/prepare_assets.py`（从 sharpa-urdf-usd-xml 拷贝并修正 mesh 路径）。
+SharpaWave URDF + mesh 已随库提供（`assets/robots/hands/sharpa_wave/`，Apache-2.0 © Sharpa）；
+如需从厂商源重新生成：`.venv/bin/python scripts/prepare_assets.py`。
 
 ### 库 API
 

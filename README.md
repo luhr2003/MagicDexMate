@@ -32,7 +32,7 @@ magicdexmate/            # 核心包（teleop venv 与 Isaac python 通用）
                          # builder.py（构建 SeqRetargeting）mapping.py（按名映射 SDK 22 序+限位 clip）
   sinks/                 # qpos_publisher.py（ZMQ，hello 带 joint_names+CRC）sapien_viz.py（调试视图）
 configs/retargeting/     # sharpa_wave_{right,left}_{vector,dexpilot}.yml（scaling 1.07 实测）
-assets/robots/hands/     # prepare_assets.py 生成的 Sharpa URDF+mesh（路径已修正）
+assets/robots/hands/     # Sharpa URDF+mesh（已入库，Apache-2.0 © Sharpa；prepare_assets.py 可重新生成）
 sim/                     # sharpa_scene.py（共享场景，参数照抄 sharpa-rl-lab）
                          # test_env_sharpa.py（模式 A 消费端；sine/home/zmq）
                          # teleop_isaac_single.py（模式 B 单进程，裸手）
