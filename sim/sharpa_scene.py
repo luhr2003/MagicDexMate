@@ -94,6 +94,42 @@ class SharpaSceneCfg(InteractiveSceneCfg):
     )
 
 
+def _hand_articulation(usd_path: str, prim_path: str, pos: tuple) -> ArticulationCfg:
+    """One floating fixed-base SharpaWave hand (same config as SharpaSceneCfg.robot)."""
+    return ArticulationCfg(
+        prim_path=prim_path,
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=usd_path,
+            activate_contact_sensors=False,
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=True, angular_damping=0.01, max_linear_velocity=1000.0,
+                max_angular_velocity=64 / math.pi * 180.0, max_depenetration_velocity=1000.0,
+                max_contact_impulse=1e32,
+            ),
+            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                enabled_self_collisions=True, solver_position_iteration_count=8,
+                solver_velocity_iteration_count=0, sleep_threshold=0.005, stabilization_threshold=0.0005,
+            ),
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            pos=pos, rot=(0.819152, 0.0, -0.5735764, 0.0), joint_pos={".*": 0.0}),
+        actuators={"joints": IdealPDActuatorCfg(joint_names_expr=[".*"], stiffness=None, damping=None)},
+        soft_joint_pos_limit_factor=1.0,
+    )
+
+
+@configclass
+class DualHandSceneCfg(InteractiveSceneCfg):
+    """Two independent floating SharpaWave hands (left + right), side by side."""
+
+    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
+    dome_light = AssetBaseCfg(
+        prim_path="/World/light", spawn=sim_utils.DomeLightCfg(intensity=2500.0, color=(0.95, 0.95, 0.95))
+    )
+    robot_left = _hand_articulation(LEFT_USD, "{ENV_REGEX_NS}/HandLeft", (-0.13, 0.0, 0.5))
+    robot_right = _hand_articulation(RL_LAB_USD, "{ENV_REGEX_NS}/HandRight", (0.13, 0.0, 0.5))
+
+
 def sine_targets(t: float, joint_names: list, limits: torch.Tensor) -> torch.Tensor:
     """Per-joint staggered raised-cosine flexion within scaled limits (demo motion)."""
     finger_phase = {"thumb": 0.0, "index": 0.1, "middle": 0.2, "ring": 0.3, "pinky": 0.4}

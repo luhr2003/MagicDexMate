@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-"""Dual-hand Isaac Lab consumer: both SharpaWave hands follow two ZMQ qpos streams.
+"""Dual-hand Isaac Lab consumer: two independent SharpaWave hands follow two ZMQ streams.
 
-Same bridged Mode A as sim/test_env_sharpa.py, but loads the dual_sharpa_wave USD
-(22 left + 22 right joints) and subscribes to BOTH producers, routing each joint
-by its left_/right_ name prefix. Run two producers (one per glove/port):
+Same bridged Mode A as sim/test_env_sharpa.py, but spawns TWO floating hands (left
+USD + right USD, side by side) and subscribes to BOTH producers, driving each hand
+from its own qpos stream. Run two producers (one per glove/port):
 
   # terminal 1 (right glove -> :5556)
   PYTHONPATH= .venv/bin/python scripts/teleop_retarget.py --source wuji --hand right --pub tcp://*:5556
@@ -28,8 +28,8 @@ parser.add_argument("--control_hz", type=float, default=60.0)
 parser.add_argument("--duration", type=float, default=0.0, help="exit after N sim-seconds (0 = forever)")
 parser.add_argument("--snap-dir", default=None, help="save RGB snapshots into this dir (works headless)")
 parser.add_argument("--snap-times", default="1,3,5", help="comma-separated sim times [s] to snapshot")
-parser.add_argument("--cam-eye", default="0.0,-0.7,0.75")
-parser.add_argument("--cam-target", default="0.0,0.0,0.45")
+parser.add_argument("--cam-eye", default="0.0,-0.9,0.75")
+parser.add_argument("--cam-target", default="0.0,0.0,0.42")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 if args_cli.snap_dir is not None:
@@ -55,7 +55,7 @@ from isaaclab.scene import InteractiveScene  # noqa: E402
 from isaaclab.sensors import CameraCfg  # noqa: E402
 from isaaclab.sim import PhysxCfg, SimulationCfg, SimulationContext  # noqa: E402
 
-from sharpa_scene import DUAL_USD, SharpaSceneCfg, sharpa_sdk_joint_names, sine_targets  # noqa: E402
+from sharpa_scene import DualHandSceneCfg, sharpa_sdk_joint_names, sine_targets  # noqa: E402
 
 
 def _parse_vec3(s):
@@ -99,43 +99,35 @@ def main():
                        max_velocity_iteration_count=0, bounce_threshold_velocity=0.2),
     )
     sim = SimulationContext(sim_cfg)
-    sim.set_camera_view(eye=(0.7, -0.5, 0.9), target=(0.0, 0.0, 0.45))
+    sim.set_camera_view(eye=(0.0, -0.9, 0.8), target=(0.0, 0.0, 0.42))
 
-    scene_cfg = SharpaSceneCfg(num_envs=1, env_spacing=1.0)
-    scene_cfg.robot.spawn.usd_path = DUAL_USD
+    scene_cfg = DualHandSceneCfg(num_envs=1, env_spacing=1.0)
     snap_times = []
     if args_cli.snap_dir is not None:
         scene_cfg.camera = CameraCfg(
             prim_path="{ENV_REGEX_NS}/snap_cam", update_period=0.0, width=1280, height=800,
-            data_types=["rgb"], spawn=sim_utils.PinholeCameraCfg(focal_length=18.0, clipping_range=(0.05, 30.0)),
+            data_types=["rgb"], spawn=sim_utils.PinholeCameraCfg(focal_length=20.0, clipping_range=(0.05, 30.0)),
         )
         snap_times = sorted(float(v) for v in args_cli.snap_times.split(",") if v.strip())
         os.makedirs(args_cli.snap_dir, exist_ok=True)
     scene = InteractiveScene(scene_cfg)
     sim.reset()
 
-    robot: Articulation = scene["robot"]
-    isaac_names = list(robot.joint_names)
-    print(f"[dual] {len(isaac_names)} joints (expect 44)")
-
-    # route each HAND joint to (hand, index within that hand's SDK qpos), by name prefix.
-    # the dual USD also carries non-hand joints (head/body) - leave those at default.
-    sdk = {h: sharpa_sdk_joint_names(h) for h in ("left", "right")}
-    fill = {h: ([], []) for h in ("left", "right")}   # hand -> (isaac_cols, sdk_idxs)
-    skipped = []
-    for i, n in enumerate(isaac_names):
-        h = "left" if n.startswith("left_") else "right"
-        if n in sdk[h]:
-            fill[h][0].append(i)
-            fill[h][1].append(sdk[h].index(n))
-        else:
-            skipped.append(n)
-    fill = {h: (torch.tensor(c, dtype=torch.long), torch.tensor(s, dtype=torch.long))
-            for h, (c, s) in fill.items()}
-    for h, (c, _) in fill.items():
-        print(f"[dual] {h}: {len(c)}/22 hand joints routed")
-    if skipped:
-        print(f"[dual] {len(skipped)} non-hand joints held at default: {skipped[:6]}{'...' if len(skipped) > 6 else ''}")
+    robots = {"left": scene["robot_left"], "right": scene["robot_right"]}
+    info = {}
+    for h, rb in robots.items():
+        inames = list(rb.joint_names)
+        snames = sharpa_sdk_joint_names(h)
+        miss = [n for n in inames if n not in snames]
+        if miss:
+            raise SystemExit(f"{h} USD joints not in SDK list: {miss}")
+        info[h] = dict(
+            names=inames,
+            sdk2isaac=torch.tensor([snames.index(n) for n in inames], dtype=torch.long),
+            limits=rb.data.joint_pos_limits[0].to("cpu"),
+            targets=rb.data.default_joint_pos.clone(),
+        )
+        print(f"[dual] {h}: {len(inames)} joints")
 
     snap_cam = None
     if args_cli.snap_dir is not None:
@@ -155,10 +147,8 @@ def main():
         Image.fromarray(rgb[..., :3]).save(path)
         print(f"\n[snap] saved {path}")
 
-    limits = robot.data.joint_pos_limits[0].to("cpu")
     sim_dt = sim.get_physics_dt()
     decimation = max(1, round(1.0 / sim_dt / args_cli.control_hz))
-    targets = robot.data.default_joint_pos.clone()
 
     recv = None
     if args_cli.motion == "zmq":
@@ -170,15 +160,16 @@ def main():
     step = 0
     while simulation_app.is_running():
         if step % decimation == 0:
-            if args_cli.motion == "sine":
-                targets[0] = sine_targets(t, isaac_names, limits).to(targets.device)
-            else:
+            if recv is not None:
                 recv.poll()
-                for h, (cols, sidx) in fill.items():
-                    if recv.qpos.get(h) is not None and recv.valid.get(h):
-                        q = torch.tensor(recv.qpos[h], dtype=torch.float32)
-                        targets[0, cols] = q[sidx].to(targets.device)
-            robot.set_joint_position_target(targets)
+            for h, rb in robots.items():
+                d = info[h]
+                if args_cli.motion == "sine":
+                    d["targets"][0] = sine_targets(t, d["names"], d["limits"]).to(d["targets"].device)
+                elif recv.qpos.get(h) is not None and recv.valid.get(h):
+                    q = torch.tensor(recv.qpos[h], dtype=torch.float32)
+                    d["targets"][0] = q[d["sdk2isaac"]].to(d["targets"].device)
+                rb.set_joint_position_target(d["targets"])
         scene.write_data_to_sim()
         sim.step()
         scene.update(sim_dt)
