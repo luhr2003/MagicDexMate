@@ -22,12 +22,14 @@ uv pip install -p "$P" --no-build-isolation --index-strategy unsafe-best-match \
 NP=$("$P" -c "import numpy; print(numpy.__version__)")
 C=$(mktemp); echo "numpy==$NP" > "$C"
 uv pip install -p "$P" -c "$C" nlopt pin pytransform3d anytree pyyaml lxml pyzmq wuji-sdk
-uv pip install -p "$P" --no-deps -e "$PWD/../dex-retargeting"
+uv pip install -p "$P" --no-deps -e "$PWD/third_party/dex-retargeting"
 
-"$P" -c "
+# importing isaaclab bootstraps Kit, which prompts for the Omniverse EULA;
+# accept it non-interactively or this verification hangs/EOFs on a fresh env.
+OMNI_KIT_ACCEPT_EULA=YES "$P" -c "
 import numpy as n, dex_retargeting, pinocchio, isaaclab
 assert n.__version__ == '$NP', 'numpy got upgraded: ' + n.__version__
-print('OK: isaaclab', isaaclab.__version__, '| numpy', n.__version__, '| pinocchio', pinocchio.__version__)
+print('OK: isaaclab', getattr(isaaclab, '__version__', '?'), '| numpy', n.__version__, '| pinocchio', pinocchio.__version__)
 "
 echo "done. first launch must accept the Omniverse EULA, e.g.:"
 echo "  OMNI_KIT_ACCEPT_EULA=YES $P sim/teleop_isaac_single.py --source mock --headless --duration 5"

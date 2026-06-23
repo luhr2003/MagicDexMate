@@ -25,7 +25,10 @@ parser.add_argument("--source", choices=["mock", "wuji"], default="mock")
 parser.add_argument("--motion", default="cycle", choices=["open", "fist", "wave", "pinch", "cycle"],
                     help="mock source motion")
 parser.add_argument("--hand", choices=["right", "left"], default="right")
-parser.add_argument("--mode", choices=["vector", "dexpilot"], default="vector")
+parser.add_argument("--mode", choices=["vector", "dexpilot"], default="dexpilot")
+parser.add_argument("--relax-distal", default=None, action=argparse.BooleanOptionalAction,
+                    help="relax DexPilot's redundant thumb_IP/pinky_DIP over-curl on the open "
+                         "hand (pinch opposition unchanged); default on for dexpilot")
 parser.add_argument("--usd", default=None, help="override hand USD path")
 parser.add_argument("--control_hz", type=float, default=60.0)
 parser.add_argument("--duration", type=float, default=0.0, help="exit after N sim-seconds (0 = run forever)")
@@ -59,6 +62,7 @@ from magicdexmate.sources.mock_source import MockGloveSource  # noqa: E402
 print(f"[setup] building retargeting (pre-Kit): sharpa_wave {args_cli.hand} {args_cli.mode}")
 retargeting = build_sharpa_retargeting(args_cli.hand, args_cli.mode)
 mapper = JointMapper(retargeting, args_cli.hand)
+do_relax = args_cli.relax_distal if args_cli.relax_distal is not None else (args_cli.mode == "dexpilot")
 src_kwargs = {"motion": args_cli.motion} if args_cli.source == "mock" else \
     {"sn": args_cli.sn, "address": args_cli.address}
 source = make_source(args_cli.source, args_cli.hand, **src_kwargs)
@@ -74,7 +78,7 @@ from isaaclab.assets import Articulation  # noqa: E402
 from isaaclab.scene import InteractiveScene  # noqa: E402
 from isaaclab.sim import PhysxCfg, SimulationCfg, SimulationContext  # noqa: E402
 
-from sharpa_scene import SharpaSceneCfg, sharpa_sdk_joint_names  # noqa: E402
+from sharpa_scene import SharpaSceneCfg, sharpa_sdk_joint_names, sharpa_usd  # noqa: E402
 
 
 def main():
@@ -98,7 +102,7 @@ def main():
     if args_cli.usd is not None:
         scene_cfg.robot.spawn.usd_path = os.path.abspath(args_cli.usd)
     elif args_cli.hand == "left":
-        raise SystemExit("left hand: pass --usd pointing to a left_sharpa_wave USD")
+        scene_cfg.robot.spawn.usd_path = sharpa_usd("left")
     scene = InteractiveScene(scene_cfg)
     sim.reset()
 
@@ -148,6 +152,8 @@ def main():
                     qpos = retargeting.retarget(ref_value)
                     rt_ms.append((time.perf_counter() - t0) * 1e3)
                     q_sdk = mapper.to_sdk(qpos)
+                    if do_relax:
+                        q_sdk = mapper.relax_distal(q_sdk, frame.kp)
                     targets[0] = torch.as_tensor(q_sdk, dtype=torch.float32)[sdk2isaac].to(targets.device)
                     n_retargets += 1
                 robot.set_joint_position_target(targets)

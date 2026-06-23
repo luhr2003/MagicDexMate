@@ -27,7 +27,7 @@ QposMsg    : {t_capture_us, t_pub_us, hand, qpos: float32[22] (rad, SDK序), wri
 
 ## 2. 代码骨架
 
-conda env `teleop`（python 3.11）：`wuji-sdk`、`pip install -e ../dex-retargeting`（含 torch/nlopt/pin/numpy>=2）、`sapien==3.0.0b0`、`pyzmq`、`mcap`。
+conda env `teleop`（python 3.11）：`wuji-sdk`、`pip install -e third_party/dex-retargeting`（已 vendored 入库；含 torch/nlopt/pin/numpy>=2）、`pyzmq`、`mcap`；`sapien==3.0.0b0` 仅 `--viz` 预览可选。
 
 ```
 MagicDexMate/

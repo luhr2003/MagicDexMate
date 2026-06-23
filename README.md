@@ -12,7 +12,7 @@ Dexmate Vega + SharpaWave 灵巧手遥操作（real + sim）：
 模式 A（双进程桥接，默认；真机也走这条路）
   [teleop 进程 .venv]  手套(wuji|mock) → retarget → ZMQ PUB(:5556, JSON+CRC)
   [Isaac Lab 进程]     sim/test_env_sharpa.py --motion zmq  ← SUB 跟随
-  [真机进程 P3]        sinks/sharpa_real.py（计划 03）      ← SUB 跟随
+  [真机进程]          scripts/sharpa_real_runner.py → sinks/sharpa_real.py  ← SUB 跟随真机(单/双手)
 
 模式 B（单进程，全部塞进 Isaac Lab python）
   [Isaac Lab 进程]     sim/teleop_isaac_single.py：手套 + retarget + 仿真，无 ZMQ
@@ -26,20 +26,25 @@ Dexmate Vega + SharpaWave 灵巧手遥操作（real + sim）：
 ```
 magicdexmate/            # 核心包（teleop venv 与 Isaac python 通用）
   skeleton.py            # MediaPipe 21 点约定、HandFrame、名字→索引
-  sources/               # wuji_source.py（真手套，按 wuji-sdk 2026.6.2 实测 API）
+  sources/               # wuji_source.py（真手套，wuji-sdk 2026.6.18 实测；recv 非阻塞已处理）
                          # mock_source.py（合成手：open/fist/wave/pinch/cycle）
   retarget/              # frames.py（逐帧 estimate_frame→MANO，对手套腕系免疫）
                          # builder.py（构建 SeqRetargeting）mapping.py（按名映射 SDK 22 序+限位 clip）
+                         # natural_distal.py（dexpilot 远端松弛：非捏合时拇/小指尖跟手套）
   sinks/                 # qpos_publisher.py（ZMQ，hello 带 joint_names+CRC）sapien_viz.py（调试视图）
+                         # sharpa_real.py（真机 SDK 驱动：限位/限速/engage/看门狗/碰撞保护）
 configs/retargeting/     # sharpa_wave_{right,left}_{vector,dexpilot}.yml（scaling 1.07 实测）
 assets/robots/hands/     # Sharpa URDF+mesh（已入库，Apache-2.0 © Sharpa；prepare_assets.py 可重新生成）
+third_party/             # dex-retargeting（vendored，MIT © Yuzhe Qin；只留 src+pyproject+LICENSE）
 sim/                     # sharpa_scene.py（共享场景，参数照抄 sharpa-rl-lab）
                          # test_env_sharpa.py（模式 A 消费端；sine/home/zmq）
                          # teleop_isaac_single.py（模式 B 单进程，裸手）
+                         # teleop_dual_sharpa.py（模式 A 双手消费端，dual USD 44 关节）
                          # vega_sharpa_scene.py + teleop_vega_sharpa.py（Vega-1P 整机，
                          #   资产/增益取自 MagicSim，腕部 rpy 姿态 IK）
 scripts/                 # setup_env.sh / install_into_isaaclab.sh / prepare_assets.py
-                         # check_env.py（自检）/ teleop_retarget.py（模式 A 主程序）
+                         # check_env.py（自检）/ teleop_retarget.py（模式 A 生产者）
+                         # sharpa_real_runner.py（真机接收端，ZMQ→SDK，单/双手）
 tests/                   # pytest（11 项）
 plans/  docs/references/ # 计划与参考笔记（见文末导航）
 ```
@@ -49,7 +54,8 @@ plans/  docs/references/ # 计划与参考笔记（见文末导航）
 ### 1. teleop 环境（uv，已建好在 `.venv/`）
 
 ```bash
-bash scripts/setup_env.sh      # uv venv py3.11 + torch-cpu + dex-retargeting(-e) + wuji-sdk + sapien + 自检
+bash scripts/setup_env.sh      # uv venv py3.11 + torch-cpu + dex-retargeting(-e, vendored 在 third_party/) + wuji-sdk + 自检
+# 可选预览窗（teleop_retarget.py --viz，非仿真器；仿真是 Isaac）：uv pip install -p .venv/bin/python "sapien==3.0.0b0"
 ```
 
 ### 2. Isaac 环境（uv venv，`.venv-isaac/`）
@@ -63,13 +69,29 @@ bash scripts/setup_isaac_env.sh        # 首次约 GB 级下载（pypi.nvidia.co
 首次启动需接受 Omniverse EULA：命令前加 `OMNI_KIT_ACCEPT_EULA=YES`。
 （备选：若想复用 `~/isaacsim` standalone 安装，可用 `scripts/install_into_isaaclab.sh ~/isaacsim/python.sh` 把 retarget 栈装进它自带的 python——但其老 pip 解析很慢，推荐 uv 路线。）
 
-### 3. Wuji 手套硬件
+### 3. Wuji 数据手套（输入端）
 
-主机网卡设 192.168.1.x/24；左手 192.168.1.100、右手 .101（UDP 50000/50001）。标定用 **Wuji Studio**（已下载到 `~/Downloads/`）：
+- **SDK**：`setup_env.sh` 已 `pip install wuji-sdk`（实测 2026.6.18）。要求 Ubuntu 22+/py3.10+、与手套同网段。手动装：`uv pip install -p .venv/bin/python wuji-sdk`。
+- **网络**：主机网卡设 `192.168.1.x/24`；**左手 192.168.1.100、右手 192.168.1.101**（UDP 50000/50001）。`ping` 验证。
+- **标定**：用 **Wuji Studio**（每用户/每设备生成手部 URDF；**不标定则 skeleton 置信度低、帧被看门狗丢弃、手不动**）：
+  ```bash
+  sudo apt install ~/Downloads/wuji-studio_2026.6.2_amd64.deb && wuji-studio
+  ```
+- 数据接收要点（实测）：`glove.hand_skeleton().subscribe().recv()` **非阻塞**（无帧返回 `None`，循环须判空）；`pose.position` 是 `[x,y,z]` list、`orientation` 是 `Quaternion`。详见 docs/references/01。
 
-```bash
-sudo apt install ~/Downloads/wuji-studio_2026.6.2_amd64.deb   # 然后运行 wuji-studio
-```
+### 4. SharpaWave 真机 SDK（输出端，只有驱动真手才需要）
+
+- 装厂商 deb → `/opt/sharpa-wave-sdk/`（v5.0.3，预编译 `sharpa.so` 覆盖 py3.10–3.13）：
+  ```bash
+  sudo dpkg -i sharpa-wave-sdk_*.deb
+  ```
+- python 包不进 pip：代码已 `sys.path.insert(0, "/opt/sharpa-wave-sdk/python")`；若动态库不解析，**启动时加 `LD_LIBRARY_PATH=/opt/sharpa-wave-sdk/lib`**。
+- **网络**：手在 `192.168.10.x`（**左手 .10、右手 .20**，host NIC `192.168.10.240`）；设备发现走**广播心跳**（端口 54321，与 IP 无关）。确认在线：
+  ```bash
+  LD_LIBRARY_PATH=/opt/sharpa-wave-sdk/lib PYTHONPATH=/opt/sharpa-wave-sdk/python \
+    .venv/bin/python -c "import time,sharpa; m=sharpa.SharpaWaveManager.get_instance(); time.sleep(2); print(m.get_all_device_sn())"
+  ```
+- 关节序 = `sharpa_sdk_joint_names`（与手册 §1.1 一致），单位 **rad**；`set_joint_position(q22, interpolate)`。手册：`~/MagicSharpa/UserManual/`。
 
 ## 快速开始
 
@@ -95,12 +117,30 @@ OMNI_KIT_ACCEPT_EULA=YES .venv-isaac/bin/python sim/teleop_vega_sharpa.py --sour
 # 做"姿态跟踪"：位置目标钉在 R_ee 初始位置，姿态=初始姿态⊗手套相对旋转；
 # P4 接入 Pico 后只需把位置目标换成 VR 轨迹，控制结构不变。--wrist off 可关腕控。
 
-# ---- 真手套（到货后把 mock 换掉即可）----
-.venv/bin/python scripts/teleop_retarget.py --source wuji --hand right --viz             # 模式 A
-.venv-isaac/bin/python sim/teleop_isaac_single.py --source wuji --hand right             # 模式 B
+# ---- 真手套驱动仿真（把 mock 换成 wuji；--source wuji 时 scripts/* 前加 PYTHONPATH= 躲 ROS）----
+PYTHONPATH= .venv/bin/python scripts/teleop_retarget.py --source wuji --hand right        # 模式 A 生产者
+.venv-isaac/bin/python sim/teleop_isaac_single.py --source wuji --hand right               # 模式 B
+
+# ---- 仿真双手（dual USD，44 关节；两个生产者两端口 + 双手消费端）----
+PYTHONPATH= .venv/bin/python scripts/teleop_retarget.py --source wuji --hand right --pub tcp://*:5556
+PYTHONPATH= .venv/bin/python scripts/teleop_retarget.py --source wuji --hand left  --pub tcp://*:5557
+OMNI_KIT_ACCEPT_EULA=YES .venv-isaac/bin/python sim/teleop_dual_sharpa.py                   # --motion sine 可无手套自测
+
+# ---- 真机遥操作（SharpaWave 实手；bench 上、手周围净空）----
+# 单手：终端1 生产者 + 终端2 真机接收端
+PYTHONPATH= .venv/bin/python scripts/teleop_retarget.py --source wuji --hand right
+LD_LIBRARY_PATH=/opt/sharpa-wave-sdk/lib PYTHONPATH= .venv/bin/python \
+    scripts/sharpa_real_runner.py --hand right --sub tcp://127.0.0.1:5556
+# 双手：两个生产者(两端口) + 一个接收端 --hand both
+PYTHONPATH= .venv/bin/python scripts/teleop_retarget.py --source wuji --hand right --pub tcp://*:5556
+PYTHONPATH= .venv/bin/python scripts/teleop_retarget.py --source wuji --hand left  --pub tcp://*:5557
+LD_LIBRARY_PATH=/opt/sharpa-wave-sdk/lib PYTHONPATH= .venv/bin/python \
+    scripts/sharpa_real_runner.py --hand both --sub tcp://127.0.0.1:5556 --sub-left tcp://127.0.0.1:5557
 ```
 
-常用参数：`--hand right|left`、`--mode vector|dexpilot`（捏合任务用 dexpilot）、`--rate/--control_hz`（默认 60）、`--sn/--address`（指定手套）、`--duration N`（定时退出，冒烟用）、`--no-pub`。
+**真机安全**：接收端启动只 connect+configure（电机上电保持当前姿、**不动**），**默认未 engage**。运行中按键：`e` engage（开始跟手）/ `w` freeze / `q` 回 home / `x` 停止退出。手套帧 stale>150ms 或故障码非零 → 自动 freeze。目标值限位 clip×0.9 + 每步限速（<固件 20° 自动插值阈值）。
+
+常用参数：`--hand right|left`、`--mode vector|dexpilot`（**默认 dexpilot**；dexpilot 下 `--relax-distal` 默认开：非捏合时拇/小指尖跟手套、捏合对位不变，`--no-relax-distal` 关）、`--rate/--control_hz`（默认 60；真机接收端默认 20）、`--sn/--address`（指定手套）、`--duration N`（定时退出，冒烟用）、`--no-pub`。
 
 ## 实测指标（2026-06-11，mock 全链路）
 
@@ -120,7 +160,7 @@ OMNI_KIT_ACCEPT_EULA=YES .venv-isaac/bin/python sim/teleop_vega_sharpa.py --sour
 5. **headless 自检拍照**：`sim/teleop_vega_sharpa.py --snap-dir DIR --snap-times "0.5,4,15.5" --cam-eye "1.6,-1.3,1.7" --cam-target "0.0,-0.2,1.15"`（自动启用离屏渲染），可在无显示器环境拍 RGB 截图核对动作；`--debug-joints` 输出分组关节遥测。
 6. **vega_1p_sharpa.usd 的雅可比行索引**：该 USD 的 ArticulationRootAPI 在 /root_joint 上，DiffIK 取雅可比应使用 `body_idx` 行（脚本默认 `--jacobi-row body`，实测保持误差 0-2mm；教程式 `body_idx-1` 会 200-600mm 跑飞）。
 7. GPU 与其他任务并发压力下，Kit 图形上下文可能 Xid 31 MMU fault 并**静默 exit 0**（无 traceback；`journalctl -k | grep -i xid` 可查）——遇到"无输出正常退出"先查这个和显存占用。
-4. **Sharpa 厂商资料（4 份 PDF + SDK 安装包）在本机全为 0 字节**，真机阶段（P3）前需重新拷贝——参考笔记 02 是从 sharpa-rl-lab 部署代码反推的替代资料。
+4. **SharpaWave 真机 SDK 已安装**（`/opt/sharpa-wave-sdk` v5.0.3 + 手册 `~/MagicSharpa/UserManual/`），真机驱动代码已写（`sinks/sharpa_real.py` + `scripts/sharpa_real_runner.py`，左右/双手）。**但两只手当前不在线**（ping 192.168.10.10/.20 不通、SDK 发现为空）——上电接网后才能实跑验证；代码侧仅验过 import/SDK 加载/安全默认。
 5. docs.dexmate.ai 需客户账号（401）；omniteleop 的 VR 代码面向 Meta Quest，**PICO 兼容性待确认**（P4 阻塞项）。
 
 ## 文档导航

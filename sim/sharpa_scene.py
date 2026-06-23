@@ -19,10 +19,20 @@ from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 
-# Default asset: the rl-lab pre-tuned USD (keep its sibling configuration/ dir!)
+# Pre-tuned vendor USDs (keep each .usda's sibling configuration/ dir!).
+# Right: MagicSharpa checkout (verified). Left + dual: the sharpa-urdf-usd-xml tree,
+# which also carries the dual_sharpa_wave (22 left + 22 right joints) variant.
 RL_LAB_USD = os.path.expanduser(
-    "~/luhr/magicsim/Sharpa/sharpa-rl-lab/assets/SharpaWave/right_sharpa_wave.usda"
+    "~/MagicSharpa/src/magicsharpa/rl_isaaclab/assets/SharpaWave/right_sharpa_wave.usda"
 )
+_USD_XML = os.path.expanduser("~/dexmate/sharpa-urdf-usd-xml/wave_01")
+LEFT_USD = f"{_USD_XML}/left_sharpa_wave/left_sharpa_wave.usda"
+DUAL_USD = f"{_USD_XML}/dual_sharpa_wave/dual_sharpa_wave.usda"
+
+
+def sharpa_usd(hand: str) -> str:
+    """Pre-tuned single-hand USD path for 'right' or 'left'."""
+    return RL_LAB_USD if hand == "right" else LEFT_USD
 
 
 def sharpa_sdk_joint_names(hand: str) -> list:

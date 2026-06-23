@@ -2,9 +2,12 @@
 
 Verified against wuji-sdk 2026.6.2:
   SdkManager.instance() / .scan() / .connect(sn=|address=|handedness=, device_name=) / .auto_connect(device_name)
-  WujiGlove.hand_skeleton() -> HandSkeletonResource -> .subscribe() -> Subscription.recv()  (sync, blocking)
+  WujiGlove.hand_skeleton() -> HandSkeletonResource -> .subscribe() -> Subscription.recv()
+    recv() is sync but NON-blocking: it returns None when no frame is ready (verified on
+    live hardware 2026-06-22), so every recv() loop must guard against None.
   HandSkeleton: .header (FrameHeader: seq, timestamp_us, frame_id), .joints: list[SkeletonJoint]
-  SkeletonJoint: .name, .pose (.position .x/.y/.z, .orientation .w/.x/.y/.z), .confidence
+  SkeletonJoint: .name, .pose (.position is a [x,y,z] list (meters), .orientation a
+    Quaternion with .w/.x/.y/.z), .confidence
   WujiGlove.imu_palm() -> ImuData stream (.orientation quaternion) at 800 Hz
 
 Network bring-up (docs/references/01_wuji_glove.md): host NIC on 192.168.1.x/24,
@@ -14,6 +17,7 @@ left glove 192.168.1.100, right 192.168.1.101, UDP 50000/50001.
 from __future__ import annotations
 
 import threading
+import time
 
 import numpy as np
 
@@ -101,6 +105,9 @@ class WujiGloveSource(GloveSource):
                 if self._stop.is_set():
                     return
                 raise
+            if skel is None:           # non-blocking recv(): None = no frame ready yet
+                time.sleep(0.001)
+                continue
             frame = self._parse_skeleton(skel)
             if frame is not None:
                 self._slot.put(frame)
@@ -113,6 +120,9 @@ class WujiGloveSource(GloveSource):
                 if self._stop.is_set():
                     return
                 raise
+            if imu is None:            # non-blocking recv(): None = no frame ready yet
+                time.sleep(0.001)
+                continue
             q = imu.orientation
             with self._wrist_lock:
                 self._wrist_quat = np.array([q.w, q.x, q.y, q.z])
@@ -129,8 +139,8 @@ class WujiGloveSource(GloveSource):
                     names = [jj.name for jj in skel.joints]
                     print(f"[wuji] WARNING: unmapped joint name {j.name!r}; frame has names: {names}")
                 continue
-            p = j.pose.position
-            kp[idx] = (p.x, p.y, p.z)
+            p = j.pose.position           # [x, y, z] list in meters (NOT a .x/.y/.z object)
+            kp[idx] = (p[0], p[1], p[2])
             conf[idx] = j.confidence
 
         if (conf < 0).any():

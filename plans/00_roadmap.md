@@ -52,6 +52,6 @@
 
 ## 5. 立即可做的下一步
 
-1. P0：建 `teleop` env，`pip install wuji-sdk` + `pip install -e ../dex-retargeting`，跑 01 §R0 资产脚本。
+1. P0：建 `teleop` env，`pip install wuji-sdk` + `pip install -e third_party/dex-retargeting`（已 vendored 入库），跑 01 §R0 资产脚本。
 2. 催办阻塞项 1（重拷 Sharpa 资料）和 2（docs.dexmate.ai 账号）。
 3. 手套到手后：录第一批 MCAP（张开/握拳/逐指捏合/数数），P1 全程靠它离线开发。

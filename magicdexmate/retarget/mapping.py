@@ -11,6 +11,8 @@ from __future__ import annotations
 import numpy as np
 from dex_retargeting.seq_retarget import SeqRetargeting
 
+from magicdexmate.retarget.natural_distal import distal_blend
+
 _SHARPA_JOINTS_TEMPLATE = [
     "{s}_thumb_CMC_FE",
     "{s}_thumb_CMC_AA",
@@ -67,3 +69,24 @@ class JointMapper:
     def to_sdk(self, qpos_pin_order: np.ndarray) -> np.ndarray:
         """(dof,) retargeting output -> (22,) SDK-order, clipped to scaled limits."""
         return np.clip(np.asarray(qpos_pin_order)[self.idx], self.lo, self.hi)
+
+    def relax_distal(self, q_sdk: np.ndarray, kp: np.ndarray) -> np.ndarray:
+        """Blend thumb_IP / pinky_DIP toward the operator's measured flexion when the
+        thumb is NOT pinching, while keeping DexPilot's value during a pinch.
+
+        DexPilot over-curls those two under-constrained distal joints (thumb tip
+        very bent, pinky tip stuck curled) even on the open hand; that curl is only
+        needed to reach the 1-2 mm fingertip opposition while pinching. `kp` is the
+        source frame's (21,3) keypoints (any consistent frame). Validated on real
+        glove data: opposition unchanged, open hand matches the operator. See
+        retarget/natural_distal.py.
+        """
+        q = np.array(q_sdk, dtype=float, copy=True)
+        for suffix, (flexion, dexpilot_w) in distal_blend(kp).items():
+            if flexion is None:
+                continue
+            for k, n in enumerate(self.sdk_names):
+                if n.endswith(suffix):
+                    relaxed = float(np.clip(flexion, self.lo[k], self.hi[k]))
+                    q[k] = dexpilot_w * q[k] + (1.0 - dexpilot_w) * relaxed
+        return q

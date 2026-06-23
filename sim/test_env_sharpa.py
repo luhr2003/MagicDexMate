@@ -50,7 +50,7 @@ from isaaclab.assets import Articulation  # noqa: E402
 from isaaclab.scene import InteractiveScene  # noqa: E402
 from isaaclab.sim import PhysxCfg, SimulationCfg, SimulationContext  # noqa: E402
 
-from sharpa_scene import SharpaSceneCfg, sharpa_sdk_joint_names, sine_targets  # noqa: E402
+from sharpa_scene import SharpaSceneCfg, sharpa_sdk_joint_names, sharpa_usd, sine_targets  # noqa: E402
 
 
 class ZmqQposReceiver:
@@ -108,7 +108,7 @@ def main():
     if args_cli.usd is not None:
         scene_cfg.robot.spawn.usd_path = os.path.abspath(args_cli.usd)
     elif args_cli.hand == "left":
-        raise SystemExit("left hand: pass --usd pointing to a left_sharpa_wave USD")
+        scene_cfg.robot.spawn.usd_path = sharpa_usd("left")
     scene = InteractiveScene(scene_cfg)
     sim.reset()
 

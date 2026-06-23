@@ -13,7 +13,7 @@
 set -euo pipefail
 PY=${1:?usage: install_into_isaaclab.sh <isaac-python, e.g. ~/isaacsim/python.sh>}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-DEX=$(cd "$REPO/../dex-retargeting" && pwd)
+DEX=$(cd "$REPO/third_party/dex-retargeting" && pwd)
 
 NP=$("$PY" -c "import numpy; print(numpy.__version__)")
 C=$(mktemp)

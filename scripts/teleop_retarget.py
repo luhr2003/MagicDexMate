@@ -37,7 +37,12 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--source", choices=["mock", "wuji"], default="mock")
     p.add_argument("--hand", choices=["right", "left"], default="right")
-    p.add_argument("--mode", choices=["vector", "dexpilot"], default="vector")
+    p.add_argument("--mode", choices=["vector", "dexpilot"], default="dexpilot")
+    p.add_argument(
+        "--relax-distal", default=None, action=argparse.BooleanOptionalAction,
+        help="relax DexPilot's redundant thumb_IP/pinky_DIP over-curl on the open hand "
+             "(pinch opposition unchanged); default on for dexpilot, off for vector",
+    )
     p.add_argument("--rate", type=float, default=60.0, help="retarget loop rate [Hz]")
     p.add_argument("--pub", default="tcp://*:5556", help="ZMQ PUB bind address")
     p.add_argument("--no-pub", action="store_true")
@@ -59,6 +64,9 @@ def main():
     print(f"[setup] building retargeting: sharpa_wave {args.hand} {args.mode}")
     retargeting = build_sharpa_retargeting(args.hand, args.mode)
     mapper = JointMapper(retargeting, args.hand)
+    do_relax = args.relax_distal if args.relax_distal is not None else (args.mode == "dexpilot")
+    if do_relax:
+        print("[setup] distal relax ON (thumb_IP/pinky_DIP follow the hand when not pinching)")
 
     src_kwargs = {}
     if args.source == "mock":
@@ -110,6 +118,8 @@ def main():
                 qpos = retargeting.retarget(ref_value)
                 rt_ms.append((time.perf_counter() - t0) * 1e3)
                 q_sdk = mapper.to_sdk(qpos)
+                if do_relax:
+                    q_sdk = mapper.relax_distal(q_sdk, frame.kp)
                 lat_ms.append((time.time_ns() // 1000 - frame.t_us) / 1e3)
                 n_retargets += 1
                 if viz is not None and not viz.update(qpos, kp_mano):
