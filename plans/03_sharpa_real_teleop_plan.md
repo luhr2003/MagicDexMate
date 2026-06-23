@@ -14,14 +14,8 @@
 
 ## 1. 前置阻塞与物料 checklist
 
-1. **重新拷贝 Sharpa 资料**（当前全为 0 字节，见 README 阻塞项）：
-   - [ ] 4 份 PDF → `MagicTactile/UserManual/`
-   - [ ] `SharpaWaveSDK_4.6.6/`（重点 `python/sharpa/` 与 `lib/*.so`）
-   - [ ] `sharpa-pilot_1_2_27_amd64_linux.deb`
-   - [ ] `DockerEnv_SharpaWaveSDK_180HzTactile_1.0.2/`（要触觉时）
-   - 验证：`find /home/msc/sharpa -type f -size 0 | wc -l` → 0
-   - 备选：docker 镜像 `sharpadev/sharpawave-rl-deploy:1.0.2-cu124` 内含 SDK，可先在容器里跑（`network_mode: host`）。
-2. 硬件：手的供电 + 以太网线；与主机同网段（SDK 是网络发现式）。
+1. ✅ **SDK 已就位（2026-06-22）**：SharpaWave SDK **5.0.3** 装在 `/opt/sharpa-wave-sdk/`，手册 `~/MagicSharpa/UserManual/`；API 已对样例+手册核实（见 references/02）。控制通路**已实现**：`magicdexmate/sinks/sharpa_real.py`（`SharpaRealHand` 单手驱动）+ `scripts/sharpa_real_runner.py`（ZMQ→真机，单/双手，安全链）。触觉 180Hz docker 配方待需要触觉数据时再接。
+2. 硬件：手的供电 + 以太网线；手在 `192.168.10.x`（左 .10 / 右 .20），host NIC 192.168.10.240。⚠ **当前两只手离线**（ping 不通、SDK 发现为空）——上电接网后才能实跑验证。
 3. PDF 到手后**核对清单**：SDK 上限控制频率、电气规格、`set_speed_coeff/current_coeff` 的确切语义、触觉通道→手指对应、固件限位。
 
 ## 2. Bring-up 步骤

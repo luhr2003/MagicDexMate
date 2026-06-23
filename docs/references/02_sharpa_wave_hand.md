@@ -1,7 +1,6 @@
 # SharpaWave 灵巧手参考笔记（硬件 + SDK + 触觉）
 
-> ⚠ **重要：4 份官方 PDF（SharpaWave / SharpaWaveSDK / SharpaPilot / 180Hz Tactile）在 `/home/msc/luhr/magicsim/MagicTactile/UserManual/` 下全是 0 字节空文件**；`/home/msc/sharpa/` 与 `/media/msc/5TB/sharpa/` 下整个 SDK 树（493 个文件，含 SharpaWaveSDK_4.6.6 的 .so、python 包、样例、`sharpa-pilot_1_2_27_amd64_linux.deb`）也全为空，疑似 rsync 只同步了元数据。**需要从原始来源重新拷贝。**
-> 本文内容是从可用代码反推的：`sharpa-rl-lab/rl_isaaclab/tasks/inhand_rotate/sharpa_wave_deploy_env.py`（已验证可运行的 SDK 用法）、`sharpa-urdf-usd-xml` URDF、SDK 目录结构与 Doxygen 文件名。整理日期 2026-06-11。
+> ✅ **已对真 SDK 核实（2026-06-22）**：SharpaWave SDK **5.0.3** 装在 `/opt/sharpa-wave-sdk/`（`python/sharpa/` 预编译 .so 覆盖 py3.10–3.13 + `sample/` + `config/`），用户手册 `~/MagicSharpa/UserManual/SharpaWaveSDK User Manual_250926.pdf`。下方 API 已逐项对 `sample/python/sharpa_wave_example.py` + 模块内省 + 手册核对（早期自 sharpa-rl-lab 部署代码的反推大体正确，已并入并订正）。真机驱动实现：`magicdexmate/sinks/sharpa_real.py` + `scripts/sharpa_real_runner.py`（左/右/双手，安全链）。整理 2026-06-11，核实 2026-06-22。
 
 ## 1. 硬件概要
 
@@ -40,28 +39,32 @@
 - ROS 支持 = 样例脚本 `sample/ROS/{wave_ros_server.py, wave_ros_client.py}`。
 - 所有控制调用返回 `Error`（`.code`==0 为成功，`.message`）。
 
-已验证的用法（摘自 sharpa_wave_deploy_env.py:129–193）：
+已核实的控制路径（对 `sample/python/sharpa_wave_example.py` + 内省 + 手册）：
 
 ```python
-from sharpa import SharpaWaveManager, ControlMode, ControlSource
-manager = SharpaWaveManager.get_instance(); time.sleep(1)     # 等待设备发现
-sns = manager.get_all_device_sn()
-hand = manager.connect(sns[0])
-info = hand.get_device_info()                                  # 有 .ip
+from sharpa import SharpaWaveManager, ControlMode, ControlSource, HandSide
+manager = SharpaWaveManager.get_instance(); time.sleep(1.5)    # 广播心跳发现(端口 54321)
+# 二选一——按手别(0或>1匹配会抛异常) 或 按 SN（"HAND..." 开头）
+hand = manager.connect(HandSide.RIGHT)                         # 或 connect(sns[0])
+info = hand.get_device_info()  # .sn/.ip/.hand_side/.device_type/.firmware_version/.status.fault_code
 
-hand.set_control_mode(ControlMode.POSITION)
-hand.set_speed_coeff(0.3)        # 0–1，速度系数（部署代码用 0.3/0.5）
-hand.set_current_coeff(0.3)      # 电流限制系数
+hand.set_control_mode(ControlMode.POSITION)                    # 每个 set_* 返回 Error(.code==0 成功)
+hand.set_speed_coeff(0.3)        # 0–1 速度系数
+hand.set_current_coeff(0.3)      # 0–1 电流限制系数（样例用 0.6）
 hand.set_control_source(ControlSource.SDK)
-hand.set_tactile_config_file("~/.sharpa-pilot/config/tactile.json")   # 可选，触觉
-hand.set_tactile_callback(cb)                                          # 可选
+hand.enable_collision_protection()                             # 安全：自碰撞保护
 hand.start()
 
-hand.set_joint_position([0.0]*22)        # rad，顺序=§2 表
-angles = hand.get_states().angles        # 22 个 rad
-hand.calib_tactile()                     # 触觉零位
+hand.set_joint_position([0.0]*22, False)   # rad，顺序=§2 表；第2参 interpolate=True 强制平滑
+err, angles = hand.get_joint_position_rad()  # 也有 get_joint_position_degree()
+st = hand.get_states()                       # .angles/.velocities/.torques/.sequence/.timestamp
+fault = hand.get_fault_code()                # 非 0 → 故障，应 freeze
 hand.stop(); SharpaWaveManager.get_instance().disconnect_all()
 ```
+
+- **插值（手册 §1.4）**：`set_joint_position(rad)` 默认直驱；但**任一关节两帧跳变 >20° 会自动插值**（c=0.01/每 2ms，<2° 或 2s 退出）；`interpolate=True` 总插值。→ 主机端把每步 Δ 限 <20°（`sharpa_real.py` 用 0.05rad）即既响应又有界。
+- **网络（手册 §1.3）**：手在 `192.168.10.x`（**左 .10 / 右 .20**，host NIC 192.168.10.240）；发现走广播心跳，与 IP 无关。Joint 数据 recv 端口 左 50000/右 50010。
+- **触觉**：`set_tactile_callback / fetch_tactile_frame / calib_tactile / bind_tactile_port`；配置经 `SharpaWaveConfig.tactile_config_file`（**非** `set_tactile_config_file`，早期反推有误）。细节手册 §3.5，未实测。
 
 - 限位：部署代码用 URDF 限位 × **0.9** 安全系数；注释称硬件取"该限位 ∩ 固件限位"。
 - 参考部署控制频率：20 Hz（sleep 实现，非 SDK 上限）。

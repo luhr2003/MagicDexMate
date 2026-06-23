@@ -25,7 +25,9 @@
 
 ## 3. SDK（Python only）
 
-`pip install wuji-sdk`；要求 **Ubuntu 22+，Python 3.10+**，与设备同网段。观察到版本 v2026.6.2。
+`pip install wuji-sdk`；要求 **Ubuntu 22+，Python 3.10+**，与设备同网段。实测版本 **v2026.6.18**。
+
+> ⚠ **真机实测（2026-06-22）**：`Subscription.recv()` 是**同步非阻塞**——无新帧返回 `None`，循环必须判空（否则 busy-spin 或 `None` 崩）；`SkeletonJoint.pose.position` 是 `[x,y,z]` **list**（不是 `.x/.y/.z` 对象），`orientation` 是 `Quaternion`（`.w/.x/.y/.z`）。已并入 `magicdexmate/sources/wuji_source.py`。
 
 ```python
 from wuji_sdk import SdkManager, Handedness
